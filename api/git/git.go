@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
+	"fmt"
+	"os/exec"
+	"log"
+	
 	gittypes "github.com/portainer/portainer/api/git/types"
 
 	"github.com/go-git/go-git/v5"
@@ -41,14 +44,25 @@ func (c *gitClient) download(ctx context.Context, dst string, opt cloneOption) e
 		gitOptions.ReferenceName = plumbing.ReferenceName(opt.referenceName)
 	}
 
-	_, err := git.PlainCloneContext(ctx, dst, false, &gitOptions)
+        _, err := git.PlainCloneContext(ctx, dst, false, &gitOptions)
 
-	if err != nil {
-		if err.Error() == "authentication required" {
-			return gittypes.ErrAuthenticationFailure
-		}
-		return errors.Wrap(err, "failed to clone git repository")
-	}
+        if err != nil {
+            if err.Error() == "authentication required" {
+                return gittypes.ErrAuthenticationFailure
+            }
+            // fallback to system git CLI
+            log.Printf("[git-fallback] go-git failed (%v), trying system git…", err)
+            cmd := exec.CommandContext(ctx,
+                "git", "clone", "--depth", "1",
+                opt.repositoryUrl, dst,
+            )
+            cmd.Env = os.Environ()
+            if out, err2 := cmd.CombinedOutput(); err2 != nil {
+                return fmt.Errorf("go-git failed: %v; git CLI failed: %v; output: %s",
+                    err, err2, string(out))
+            }
+            // success via git CLI
+        }
 
 	if !c.preserveGitDirectory {
 		os.RemoveAll(filepath.Join(dst, ".git"))
